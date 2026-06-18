@@ -18,4 +18,8 @@
 </ItemGroup>
 
 
+  <Target Name="ForceCleanPublishDir" BeforeTargets="BeforePublish">
+    <Exec Condition="Exists('$(PublishDir)')" Command="powershell -NoProfile -Command &quot;$retry=3; do { try { Remove-Item -LiteralPath '$(PublishDir)' -Recurse -Force -ErrorAction Stop; break } catch { $retry--; if ($retry -eq 0) { throw }; Start-Sleep -Seconds 2 } } while ($retry -gt 0)&quot;" />
+  </Target>
+
 </Project>
