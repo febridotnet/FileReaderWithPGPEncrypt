@@ -14,7 +14,7 @@ class Program
 
         if (!File.Exists(configPath))
         {
-            Console.WriteLine("config.inf tidak ditemukan!");
+            LogError("config.inf tidak ditemukan!");
             return;
         }
 
