@@ -36,7 +36,7 @@ class Program
                     file,
                     FileMode.Open,
                     FileAccess.Read,
-                    FileShare.ReadWrite   // ✅ penting
+                    FileShare.ReadWrite
                 ))
                 using (var keyStream = File.OpenRead(config.PrivateKeyPath))
                 using (var memoryStream = new MemoryStream())
@@ -69,11 +69,8 @@ class Program
                         Console.WriteLine($"SUCCESS -> {outputFile}");
                     }
                 }
-                // ✅ Paksa release semua resource
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
-
-                // ✅ sedikit delay
                 System.Threading.Thread.Sleep(200);
 
                 MoveToArchive(file, config.ArchivedFolder);
@@ -85,68 +82,8 @@ class Program
                 LogError(errorMsg);
 
                 System.Threading.Thread.Sleep(200);
-                //MoveToArchive(file, config.ArchivedFolder);
             }
         }
-
-/*
-        foreach (var file in files)
-        {
-            try
-            {
-                Console.WriteLine($"Processing: {file}");
-
-                //using var inputStream = File.OpenRead(file);
-
-                using var inputStream = new FileStream(
-                    file,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.ReadWrite   // ✅ FIX
-                );
-
-                using var keyStream = File.OpenRead(config.PrivateKeyPath);
-                using (var memoryStream = new MemoryStream())
-                {
-                    bool success = DecryptFileSafe(
-                        inputStream,
-                        memoryStream,
-                        keyStream,
-                        config.Passphrase.ToCharArray()
-                    );
-
-                    if (!success)
-                    {
-                        string msg = $"Decrypt gagal: {file}";
-                        Console.WriteLine(msg);
-                        LogError(msg);
-                    }
-                    else
-                    {
-                        string content = System.Text.Encoding.UTF8.GetString(memoryStream.ToArray());
-
-                        string outputFile = Path.Combine(
-                            config.OutboundFolder,
-                            Path.GetFileNameWithoutExtension(file) + ".csv"
-                        );
-
-                        File.WriteAllText(outputFile, content);
-                        Console.WriteLine($"SUCCESS -> {outputFile}");
-                    }
-                }
-
-                // ✅ DI SINI stream SUDAH CLOSE → aman
-                MoveToArchive(file, config.ArchivedFolder);
-            }
-            catch (Exception ex)
-            {
-                string errorMsg = $"File: {file} | Error: {ex.Message}";
-                Console.WriteLine(errorMsg);
-                LogError(errorMsg);
-                MoveToArchive(file, config.ArchivedFolder);
-            }
-        }
-*/
         Console.WriteLine("=== SELESAI ===");
     }
 
@@ -208,17 +145,9 @@ class Program
                         Stream unc = literalData.GetInputStream();
                         Streams.PipeAll(unc, outputStream);
                         outputStream.Flush();
-
-                        //dataDitemukan = true;
-                        //break;
                     }
                     innerMessage = compressedFactory.NextPgpObject();
                 }
-
-                //if (!dataDitemukan)
-                //{
-                //    return false; // Loop selesai tapi PgpLiteralData tidak ada
-                //}
             }
             else if (message is PgpLiteralData literalData)
             {
@@ -230,17 +159,15 @@ class Program
                 return false;
             }
 
-            // ✅ Integrity Check
             if (encryptedData.IsIntegrityProtected() && !encryptedData.Verify())
             {
                 return false;
             }
 
-            return true; // ✅ sukses
+            return true;
         }
         catch
         {
-            // ✅ Semua error dianggap gagal (tidak tulis file)
             return false;
         }
     }
@@ -320,9 +247,9 @@ class Program
 
             File.AppendAllText(logPath, logMessage);
         }
-        catch
+        catch(Exception e)
         {
-            // ✅ Kalau logging gagal, jangan ganggu aplikasi utama
+            Console.WriteLine($"Gagal menulis log error.\nError: {e.Message}");
         }
     }
 
@@ -334,7 +261,6 @@ class Program
 
             string destPath = Path.Combine(archiveFolder, fileName);
 
-            // ✅ Hindari overwrite
             if (File.Exists(destPath))
             {
                 string newFileName = Path.GetFileNameWithoutExtension(fileName)
