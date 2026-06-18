@@ -76,7 +76,7 @@ class Program
                 // ✅ sedikit delay
                 System.Threading.Thread.Sleep(200);
 
-                //MoveToArchive(file, config.ArchivedFolder);
+                MoveToArchive(file, config.ArchivedFolder);
             }
             catch (Exception ex)
             {
@@ -198,19 +198,27 @@ class Program
                 Stream compressedStream = compressedData.GetDataStream();
                 PgpObjectFactory compressedFactory = new PgpObjectFactory(compressedStream);
                 object innerMessage = compressedFactory.NextPgpObject();
-                if (innerMessage is PgpLiteralData literalData)
+                bool dataDitemukan = false;
+
+                // Loop terus menerus sampai isi data (PgpLiteralData) ditemukan
+                while (innerMessage != null)
                 {
-                    Stream unc = literalData.GetInputStream();
-                    Streams.PipeAll(unc, outputStream);
+                    if (innerMessage is PgpLiteralData literalData)
+                    {
+                        Stream unc = literalData.GetInputStream();
+                        Streams.PipeAll(unc, outputStream);
+                        outputStream.Flush();
+
+                        //dataDitemukan = true;
+                        //break;
+                    }
+                    innerMessage = compressedFactory.NextPgpObject();
                 }
-                else if (innerMessage is PgpOnePassSignatureList)
-                {
-                    // ... (logika untuk PGP Signature jika diperlukan) ...
-                }
-                else
-                {
-                    return false;
-                }
+
+                //if (!dataDitemukan)
+                //{
+                //    return false; // Loop selesai tapi PgpLiteralData tidak ada
+                //}
             }
             else if (message is PgpLiteralData literalData)
             {
@@ -237,27 +245,6 @@ class Program
         }
     }
 
-    static PgpPublicKey DapatkanPublicKeyPengirim(string publicKeyPath, long keyId)
-    {
-        // Membaca file Public Key fisik
-        using (Stream keyIn = File.OpenRead(publicKeyPath))
-        // Decode stream (membuka ASCII armor jika formatnya .asc)
-        using (Stream inputStream = PgpUtilities.GetDecoderStream(keyIn))
-        {
-            PgpPublicKeyRingBundle pgpPubRingCollection = new PgpPublicKeyRingBundle(inputStream);
-
-            // Mencari public key yang cocok dengan ID dari OnePassSignature
-            PgpPublicKey publicKey = pgpPubRingCollection.GetPublicKey(keyId);
-
-            if (publicKey == null)
-            {
-                throw new ArgumentException($"Public Key dengan ID {keyId:X} tidak ditemukan di dalam file {publicKeyPath}");
-            }
-
-            return publicKey;
-        }
-    }
-
     static PgpPrivateKey FindSecretKey(PgpSecretKeyRingBundle keyRing, long keyId, char[] pass)
     {
         try
@@ -267,7 +254,7 @@ class Program
         }
         catch
         {
-            return null; // ❌ passphrase salah
+            return null;
         }
     }
 
@@ -302,9 +289,6 @@ class Program
                 case "privatekeypath":
                     config.PrivateKeyPath = value;
                     break;
-                //case "passphrase":
-                //    config.Passphrase = value;
-                //    break;
             }
         }
 
@@ -324,9 +308,6 @@ class Program
 
         if (!File.Exists(config.PrivateKeyPath))
             throw new Exception("Private key tidak ditemukan");
-
-        //if (string.IsNullOrEmpty(config.Passphrase))
-        //    throw new Exception("Passphrase kosong");
     }
     
     static void LogError(string message)
