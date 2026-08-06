@@ -1,0 +1,5 @@
+[SETTINGS]
+InboundFolder=\\10.110.32.211\HCM_Talenta\HCM_INBOUND\UAT\INBOX
+OutboundFolder=\\10.110.32.211\HCM_Talenta\HCM_INBOUND\UAT\INBOX_DECRYPT
+ArchivedFolder=\\10.110.32.211\HCM_Talenta\HCM_INBOUND\UAT\INBOX_PROCESSED
+PrivateKeyPath=C:\Users\Febri.nugraha\OneDrive - AS Watson Group\Download\watson\watson\Watson - PGP\Product App\private_key_10062026.asc
