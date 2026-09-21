@@ -73,11 +73,11 @@ class Program
                 GC.WaitForPendingFinalizers();
                 System.Threading.Thread.Sleep(200);
 
-                MoveToArchive(file, config.ArchivedFolder);
+                //MoveToArchive(file, config.ArchivedFolder);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"File: {file} | Error: {ex.Message}";
+                string errorMsg = $"File: {file} | Error: {ex.InnerException.Message}";
                 Console.WriteLine(errorMsg);
                 LogError(errorMsg);
 
