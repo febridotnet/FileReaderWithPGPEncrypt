@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using Org.BouncyCastle.Bcpg.OpenPgp;
 using Org.BouncyCastle.Utilities.IO;
+using Renci.SshNet;
 
 class Program
 {
@@ -21,7 +22,7 @@ class Program
         var config = LoadConfig(configPath);
         ValidateConfig(config);
 
-        var files = Directory.GetFiles(config.InboundFolder, "*.pgp", SearchOption.AllDirectories);
+        var files = Directory.GetFiles(config.InboundFolder, "*.pgp", SearchOption.TopDirectoryOnly);
 
         Console.WriteLine($"Total file .pgp: {files.Length}");
         foreach (var file in files)
@@ -32,6 +33,11 @@ class Program
             {
                 Console.WriteLine($"Processing: {file}");
 
+                Stream signingKeyStream = null;
+                if (!string.IsNullOrWhiteSpace(config.SigningKeyPath) && File.Exists(config.SigningKeyPath))
+                    signingKeyStream = File.OpenRead(config.SigningKeyPath);
+
+                using (signingKeyStream)
                 using (var inputStream = new FileStream(
                     file,
                     FileMode.Open,
@@ -45,7 +51,8 @@ class Program
                         inputStream,
                         memoryStream,
                         keyStream,
-                        "HCM_SIT_id26".ToCharArray()
+                        signingKeyStream,
+                        "WTCID_Prod_26".ToCharArray()
                     );
 
                     if (!success)
@@ -53,6 +60,8 @@ class Program
                         string msg = $"Decrypt gagal: {file}";
                         Console.WriteLine(msg);
                         LogError(msg);
+                        UploadFailedToSftp(config, file);
+                        MoveFile(file, config.FailedFolder);
                         continue;
                     }
                     else
@@ -67,19 +76,23 @@ class Program
                         File.WriteAllText(outputFile, content);
 
                         Console.WriteLine($"SUCCESS -> {outputFile}");
+
+                        UploadSuccessToSftp(config, file);
                     }
                 }
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 System.Threading.Thread.Sleep(200);
 
-                //MoveToArchive(file, config.ArchivedFolder);
+                MoveFile(file, config.ArchivedFolder);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"File: {file} | Error: {ex.InnerException.Message}";
+                string errorMsg = $"File: {file} | Error: {ex.InnerException?.Message}";
                 Console.WriteLine(errorMsg);
                 LogError(errorMsg);
+                UploadFailedToSftp(config, file);
+                MoveFile(file, config.FailedFolder);
 
                 System.Threading.Thread.Sleep(200);
             }
@@ -87,7 +100,7 @@ class Program
         Console.WriteLine("=== SELESAI ===");
     }
 
-    static bool DecryptFileSafe(Stream inputStream, Stream outputStream, Stream privateKeyStream, char[] passPhrase)
+    static bool DecryptFileSafe(Stream inputStream, Stream outputStream, Stream privateKeyStream, Stream signingKeyStream, char[] passPhrase)
     {
         try
         {
@@ -128,35 +141,106 @@ class Program
             Stream clear = encryptedData.GetDataStream(privateKey);
             PgpObjectFactory plainFact = new PgpObjectFactory(clear);
 
-            PgpObject message = plainFact.NextPgpObject();
+            PgpPublicKeyRingBundle signingKeyRing = signingKeyStream == null
+                ? null
+                : new PgpPublicKeyRingBundle(
+                    Org.BouncyCastle.Bcpg.OpenPgp.PgpUtilities.GetDecoderStream(signingKeyStream));
 
-            if (message is PgpCompressedData compressedData)
+            List<PgpOnePassSignature> onePassSignatures = new List<PgpOnePassSignature>();
+            PgpSignatureList signatureList = null;
+            bool dataDitemukan = false;
+
+            void ProcessPgpObject(object pgpObject)
+            {
+                if (pgpObject is PgpOnePassSignatureList onePassList)
+                {
+                    for (int i = 0; i < onePassList.Count; i++)
+                    {
+                        PgpOnePassSignature onePassSignature = onePassList[i];
+                        if (signingKeyRing == null)
+                            break;
+
+                        PgpPublicKey publicKey = FindPublicKey(signingKeyRing, onePassSignature.KeyId);
+                        if (publicKey != null)
+                        {
+                            onePassSignature.InitVerify(publicKey);
+                            onePassSignatures.Add(onePassSignature);
+                        }
+                    }
+                }
+                else if (pgpObject is PgpLiteralData literalData)
+                {
+                    Stream unc = literalData.GetInputStream();
+                    byte[] buffer = new byte[8192];
+                    int read;
+
+                    while ((read = unc.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        foreach (PgpOnePassSignature onePassSignature in onePassSignatures)
+                            onePassSignature.Update(buffer, 0, read);
+
+                        outputStream.Write(buffer, 0, read);
+                    }
+
+                    outputStream.Flush();
+                    dataDitemukan = true;
+                }
+                else if (pgpObject is PgpSignatureList sigList)
+                {
+                    signatureList = sigList;
+                }
+            }
+
+            object first = plainFact.NextPgpObject();
+
+            if (first == null)
+            {
+                return false;
+            }
+
+            if (first is PgpCompressedData compressedData)
             {
                 Stream compressedStream = compressedData.GetDataStream();
                 PgpObjectFactory compressedFactory = new PgpObjectFactory(compressedStream);
-                object innerMessage = compressedFactory.NextPgpObject();
-                bool dataDitemukan = false;
 
                 // Loop terus menerus sampai isi data (PgpLiteralData) ditemukan
+                object innerMessage = compressedFactory.NextPgpObject();
                 while (innerMessage != null)
                 {
-                    if (innerMessage is PgpLiteralData literalData)
-                    {
-                        Stream unc = literalData.GetInputStream();
-                        Streams.PipeAll(unc, outputStream);
-                        outputStream.Flush();
-                    }
+                    ProcessPgpObject(innerMessage);
                     innerMessage = compressedFactory.NextPgpObject();
                 }
             }
-            else if (message is PgpLiteralData literalData)
-            {
-                Stream unc = literalData.GetInputStream();
-                Streams.PipeAll(unc, outputStream);
-            }
             else
             {
+                ProcessPgpObject(first);
+
+                object next;
+                while ((next = plainFact.NextPgpObject()) != null)
+                {
+                    ProcessPgpObject(next);
+                }
+            }
+
+            if (!dataDitemukan)
+            {
                 return false;
+            }
+
+            if (signingKeyStream != null && onePassSignatures.Count > 0)
+            {
+                if (signatureList == null || onePassSignatures.Count != signatureList.Count)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < onePassSignatures.Count; i++)
+                {
+                    if (!onePassSignatures[i].Verify(signatureList[i]))
+                    {
+                        return false;
+                    }
+                }
             }
 
             if (encryptedData.IsIntegrityProtected() && !encryptedData.Verify())
@@ -178,6 +262,19 @@ class Program
         {
             PgpSecretKey secretKey = keyRing.GetSecretKey(keyId);
             return secretKey?.ExtractPrivateKey(pass);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static PgpPublicKey FindPublicKey(PgpPublicKeyRingBundle keyRingBundle, long keyId)
+    {
+        try
+        {
+            PgpPublicKeyRing keyRing = keyRingBundle.GetPublicKeyRing(keyId);
+            return keyRing?.GetPublicKey(keyId);
         }
         catch
         {
@@ -213,8 +310,29 @@ class Program
                 case "archivedfolder":
                     config.ArchivedFolder = value;
                     break;
+                case "failedfolder":
+                    config.FailedFolder = value;
+                    break;
                 case "privatekeypath":
                     config.PrivateKeyPath = value;
+                    break;
+                case "signingkey":
+                    config.SigningKeyPath = value;
+                    break;
+                case "sshpk":
+                    config.SSHPK = value;
+                    break;
+                case "sshun":
+                    config.SSHUN = value;
+                    break;
+                case "sship":
+                    config.SSHIP = value;
+                    break;
+                case "sftperrorfolder":
+                    config.SFTPErrorFolder = value;
+                    break;
+                case "sftparchivefolder":
+                    config.SFTPArchiveFolder = value;
                     break;
             }
         }
@@ -232,6 +350,9 @@ class Program
 
         if (!Directory.Exists(config.ArchivedFolder))
             Directory.CreateDirectory(config.ArchivedFolder);
+
+        if (!Directory.Exists(config.FailedFolder))
+            Directory.CreateDirectory(config.FailedFolder);
 
         if (!File.Exists(config.PrivateKeyPath))
             throw new Exception("Private key tidak ditemukan");
@@ -253,13 +374,13 @@ class Program
         }
     }
 
-    static void MoveToArchive(string sourceFile, string archiveFolder)
+    static void MoveFile(string sourceFile, string destinationFolder)
     {
         try
         {
             string fileName = Path.GetFileName(sourceFile);
 
-            string destPath = Path.Combine(archiveFolder, fileName);
+            string destPath = Path.Combine(destinationFolder, fileName);
 
             if (File.Exists(destPath))
             {
@@ -267,16 +388,85 @@ class Program
                     + "_" + DateTime.Now.ToString("yyyyMMddHHmmss")
                     + Path.GetExtension(fileName);
 
-                destPath = Path.Combine(archiveFolder, newFileName);
+                destPath = Path.Combine(destinationFolder, newFileName);
             }
 
             File.Move(sourceFile, destPath);
 
-            Console.WriteLine($"Moved to archive -> {destPath}");
+            Console.WriteLine($"Moved to {destinationFolder} -> {destPath}");
         }
         catch (Exception ex)
         {
-            LogError($"Gagal move file ke archive: {sourceFile} | {ex.Message}");
+            LogError($"Gagal move file: {sourceFile} | {ex.Message}");
+        }
+    }
+
+    static SftpClient ConnectSftp(Config config)
+    {
+        try
+        {
+            var privateKey = new PrivateKeyFile(config.SSHPK);
+            var client = new SftpClient(config.SSHIP, config.SSHUN, privateKey);
+            client.Connect();
+
+            Console.WriteLine($"SFTP connected: {config.SSHUN}@{config.SSHIP}");
+
+            return client;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"SFTP connection gagal ke {config.SSHUN}@{config.SSHIP}: {ex.Message}", ex);
+        }
+    }
+
+    static void UploadFailedToSftp(Config config, string sourceFile)
+    {
+        UploadToSftp(config, sourceFile, config.SFTPErrorFolder, "error");
+    }
+
+    static void UploadSuccessToSftp(Config config, string sourceFile)
+    {
+        UploadToSftp(config, sourceFile, config.SFTPArchiveFolder, "archive");
+    }
+
+    static void UploadToSftp(Config config, string sourceFile, string remoteFolder, string label)
+    {
+        try
+        {
+            using (var client = ConnectSftp(config))
+            {
+                EnsureRemoteDirectory(client, remoteFolder);
+
+                string remoteFile = remoteFolder.TrimEnd('/') + "/" + Path.GetFileName(sourceFile);
+
+                using (var fileStream = File.OpenRead(sourceFile))
+                {
+                    client.UploadFile(fileStream, remoteFile, true);
+                }
+
+                Console.WriteLine($"SFTP {label} folder upload -> {remoteFile}");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"Gagal upload file ke SFTP {label} folder: {sourceFile} | {ex.Message}");
+        }
+    }
+
+    static void EnsureRemoteDirectory(SftpClient client, string remoteFolder)
+    {
+        string normalized = remoteFolder.TrimStart('/');
+
+        string current = "";
+        foreach (string segment in normalized.Split('/'))
+        {
+            if (string.IsNullOrEmpty(segment))
+                continue;
+
+            current = current + "/" + segment;
+
+            if (!client.Exists(current))
+                client.CreateDirectory(current);
         }
     }
 
@@ -287,6 +477,13 @@ class Config
     public string InboundFolder { get; set; }
     public string OutboundFolder { get; set; }
     public string ArchivedFolder { get; set; }
+    public string FailedFolder { get; set; }
     public string PrivateKeyPath { get; set; }
+    public string SigningKeyPath { get; set; }
+    public string SSHPK { get; set; }
+    public string SSHUN { get; set; }
+    public string SSHIP { get; set; }
+    public string SFTPErrorFolder { get; set; }
+    public string SFTPArchiveFolder { get; set; }
     public string Passphrase { get; set; }
 }
