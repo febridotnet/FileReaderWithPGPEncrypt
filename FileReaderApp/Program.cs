@@ -103,6 +103,7 @@ class Program
         var config = LoadConfig(configPath);
         ValidateConfig(config);
 
+        var totalProcessingTimer = Stopwatch.StartNew();
         var files = Directory.GetFiles(config.InboundFolder, "*.pgp", SearchOption.TopDirectoryOnly);
 
         Console.WriteLine($"Total file .pgp: {files.Length}");
@@ -181,6 +182,8 @@ class Program
                     $"Processing duration: {file} | {processingTimer.Elapsed:hh\\:mm\\:ss\\.fff}");
             }
         }
+        totalProcessingTimer.Stop();
+        Console.WriteLine($"Total processing duration: {totalProcessingTimer.Elapsed:dd\\.hh\\:mm\\:ss\\.fff}");
         Console.WriteLine("=== SELESAI ===");
     }
 
