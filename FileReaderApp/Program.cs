@@ -1,12 +1,64 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Org.BouncyCastle.Bcpg.OpenPgp;
 using Org.BouncyCastle.Utilities.IO;
 
 class Program
 {
-    static void Main(string[] args)
+    static async Task Main(string[] args)
+    {
+        using var cancellationTokenSource = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellationTokenSource.Cancel();
+        };
+
+        Console.WriteLine("PGP File Decryptor scheduled for 6:00 AM, 12:00 PM, and 8:00 PM.");
+        ExecuteRun();
+
+        while (!cancellationTokenSource.IsCancellationRequested)
+        {
+            DateTime nextRun = GetNextRun(DateTime.Now);
+            Console.WriteLine($"Next run: {nextRun:yyyy-MM-dd HH:mm:ss}");
+
+            try
+            {
+                while (!cancellationTokenSource.IsCancellationRequested)
+                {
+                    TimeSpan remaining = nextRun - DateTime.Now;
+                    if (remaining <= TimeSpan.Zero)
+                        break;
+
+                    if (!Console.IsOutputRedirected)
+                    {
+                        Console.Write($"\rCountdown to next run: {remaining:hh\\:mm\\:ss}   ");
+                    }
+
+                    await Task.Delay(
+                        remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1),
+                        cancellationTokenSource.Token);
+                }
+
+                if (!Console.IsOutputRedirected)
+                    Console.WriteLine();
+            }
+            catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+            {
+                break;
+            }
+
+            if (!cancellationTokenSource.IsCancellationRequested)
+                ExecuteRun();
+        }
+
+        Console.WriteLine("Application closed by user.");
+    }
+
+    static void ExecuteRun()
     {
         try
         {
@@ -18,33 +70,28 @@ class Program
             Console.WriteLine(msg);
             LogError(msg);
         }
-        //finally
-        //{
-        //    WaitForEnter();
-        //}
     }
 
-    static void WaitForEnter()
+    static DateTime GetNextRun(DateTime now)
     {
-        try
-        {
-            if (Console.IsInputRedirected)
-                return;
+        int[] scheduledHours = [6, 12, 20];
 
-            Console.WriteLine("Tekan Enter untuk menutup...");
-            Console.ReadLine();
-        }
-        catch
+        foreach (int hour in scheduledHours)
         {
+            DateTime scheduledTime = now.Date.AddHours(hour);
+            if (scheduledTime > now)
+                return scheduledTime;
         }
+
+        return now.Date.AddDays(1).AddHours(scheduledHours[0]);
     }
 
     static void Run()
     {
-        Console.WriteLine("=== PGP File Decryptor v1.0 ===");
-
         string configPath = Path.Combine(AppContext.BaseDirectory, "config.inf");
-        //string configPath = Path.Combine("D:\\HCM_Talenta\\SCHEDULER\\HCMDecryptor\\KEY", "config.inf");
+        Console.WriteLine($"config path: {configPath}");
+        Console.WriteLine();
+        Console.WriteLine("=== PGP File Decryptor v1.0 ===");
 
         if (!File.Exists(configPath))
         {
