@@ -3,19 +3,52 @@ using System.IO;
 using System.Linq;
 using Org.BouncyCastle.Bcpg.OpenPgp;
 using Org.BouncyCastle.Utilities.IO;
-using Renci.SshNet;
 
 class Program
 {
     static void Main(string[] args)
     {
+        try
+        {
+            Run();
+        }
+        catch (Exception ex)
+        {
+            string msg = $"Fatal error: {ex.InnerException?.Message ?? ex.Message}";
+            Console.WriteLine(msg);
+            LogError(msg);
+        }
+        //finally
+        //{
+        //    WaitForEnter();
+        //}
+    }
+
+    static void WaitForEnter()
+    {
+        try
+        {
+            if (Console.IsInputRedirected)
+                return;
+
+            Console.WriteLine("Tekan Enter untuk menutup...");
+            Console.ReadLine();
+        }
+        catch
+        {
+        }
+    }
+
+    static void Run()
+    {
         Console.WriteLine("=== PGP File Decryptor v1.0 ===");
 
-        string configPath = Path.Combine(AppContext.BaseDirectory, "config.inf");
+        //string configPath = Path.Combine(AppContext.BaseDirectory, "config.inf");
+        string configPath = Path.Combine("D:\\HCM_Talenta\\SCHEDULER\\HCMDecryptor\\KEY", "config.inf");
 
         if (!File.Exists(configPath))
         {
-            LogError("config.inf tidak ditemukan!");
+            Console.WriteLine("config.inf tidak ditemukan!");
             return;
         }
 
@@ -60,7 +93,6 @@ class Program
                         string msg = $"Decrypt gagal: {file}";
                         Console.WriteLine(msg);
                         LogError(msg);
-                        UploadFailedToSftp(config, file);
                         MoveFile(file, config.FailedFolder);
                         continue;
                     }
@@ -76,8 +108,6 @@ class Program
                         File.WriteAllText(outputFile, content);
 
                         Console.WriteLine($"SUCCESS -> {outputFile}");
-
-                        UploadSuccessToSftp(config, file);
                     }
                 }
                 GC.Collect();
@@ -91,7 +121,6 @@ class Program
                 string errorMsg = $"File: {file} | Error: {ex.InnerException?.Message}";
                 Console.WriteLine(errorMsg);
                 LogError(errorMsg);
-                UploadFailedToSftp(config, file);
                 MoveFile(file, config.FailedFolder);
 
                 System.Threading.Thread.Sleep(200);
@@ -319,21 +348,6 @@ class Program
                 case "signingkey":
                     config.SigningKeyPath = value;
                     break;
-                case "sshpk":
-                    config.SSHPK = value;
-                    break;
-                case "sshun":
-                    config.SSHUN = value;
-                    break;
-                case "sship":
-                    config.SSHIP = value;
-                    break;
-                case "sftperrorfolder":
-                    config.SFTPErrorFolder = value;
-                    break;
-                case "sftparchivefolder":
-                    config.SFTPArchiveFolder = value;
-                    break;
             }
         }
 
@@ -394,79 +408,11 @@ class Program
             File.Move(sourceFile, destPath);
 
             Console.WriteLine($"Moved to {destinationFolder} -> {destPath}");
+            Console.WriteLine("");
         }
         catch (Exception ex)
         {
             LogError($"Gagal move file: {sourceFile} | {ex.Message}");
-        }
-    }
-
-    static SftpClient ConnectSftp(Config config)
-    {
-        try
-        {
-            var privateKey = new PrivateKeyFile(config.SSHPK);
-            var client = new SftpClient(config.SSHIP, config.SSHUN, privateKey);
-            client.Connect();
-
-            Console.WriteLine($"SFTP connected: {config.SSHUN}@{config.SSHIP}");
-
-            return client;
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"SFTP connection gagal ke {config.SSHUN}@{config.SSHIP}: {ex.Message}", ex);
-        }
-    }
-
-    static void UploadFailedToSftp(Config config, string sourceFile)
-    {
-        UploadToSftp(config, sourceFile, config.SFTPErrorFolder, "error");
-    }
-
-    static void UploadSuccessToSftp(Config config, string sourceFile)
-    {
-        UploadToSftp(config, sourceFile, config.SFTPArchiveFolder, "archive");
-    }
-
-    static void UploadToSftp(Config config, string sourceFile, string remoteFolder, string label)
-    {
-        try
-        {
-            using (var client = ConnectSftp(config))
-            {
-                EnsureRemoteDirectory(client, remoteFolder);
-
-                string remoteFile = remoteFolder.TrimEnd('/') + "/" + Path.GetFileName(sourceFile);
-
-                using (var fileStream = File.OpenRead(sourceFile))
-                {
-                    client.UploadFile(fileStream, remoteFile, true);
-                }
-
-                Console.WriteLine($"SFTP {label} folder upload -> {remoteFile}");
-            }
-        }
-        catch (Exception ex)
-        {
-            LogError($"Gagal upload file ke SFTP {label} folder: {sourceFile} | {ex.Message}");
-        }
-    }
-
-    static void EnsureRemoteDirectory(SftpClient client, string remoteFolder)
-    {
-        string normalized = remoteFolder.TrimStart('/');
-
-        string current = "";
-        foreach (string segment in normalized.Split('/'))
-        {
-            if (string.IsNullOrEmpty(segment))
-                continue;
-
-            current = current + "/" + segment;
-
-            if (!client.Exists(current))
-                client.CreateDirectory(current);
         }
     }
 
@@ -480,10 +426,5 @@ class Config
     public string FailedFolder { get; set; }
     public string PrivateKeyPath { get; set; }
     public string SigningKeyPath { get; set; }
-    public string SSHPK { get; set; }
-    public string SSHUN { get; set; }
-    public string SSHIP { get; set; }
-    public string SFTPErrorFolder { get; set; }
-    public string SFTPArchiveFolder { get; set; }
     public string Passphrase { get; set; }
 }
