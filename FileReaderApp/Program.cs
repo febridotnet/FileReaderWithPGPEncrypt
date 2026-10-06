@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -108,6 +109,7 @@ class Program
         foreach (var file in files)
         {
             bool success = false;
+            var processingTimer = Stopwatch.StartNew();
 
             try
             {
@@ -171,6 +173,12 @@ class Program
                 MoveFile(file, config.FailedFolder);
 
                 System.Threading.Thread.Sleep(200);
+            }
+            finally
+            {
+                processingTimer.Stop();
+                Console.WriteLine(
+                    $"Processing duration: {file} | {processingTimer.Elapsed:hh\\:mm\\:ss\\.fff}");
             }
         }
         Console.WriteLine("=== SELESAI ===");
