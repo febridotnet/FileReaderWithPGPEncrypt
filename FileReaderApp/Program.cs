@@ -35,7 +35,7 @@ class Program
 
                     if (!Console.IsOutputRedirected)
                     {
-                        Console.Write($"\rCountdown to next run: {remaining:hh\\:mm\\:ss}   ");
+                        Console.Write($"\rCountdown to next run: {remaining:hh\\:mm\\:ss}");
                     }
 
                     await Task.Delay(
