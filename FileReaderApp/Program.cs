@@ -43,8 +43,8 @@ class Program
     {
         Console.WriteLine("=== PGP File Decryptor v1.0 ===");
 
-        //string configPath = Path.Combine(AppContext.BaseDirectory, "config.inf");
-        string configPath = Path.Combine("D:\\HCM_Talenta\\SCHEDULER\\HCMDecryptor\\KEY", "config.inf");
+        string configPath = Path.Combine(AppContext.BaseDirectory, "config.inf");
+        //string configPath = Path.Combine("D:\\HCM_Talenta\\SCHEDULER\\HCMDecryptor\\KEY", "config.inf");
 
         if (!File.Exists(configPath))
         {
